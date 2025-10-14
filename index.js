@@ -5,7 +5,7 @@ dotenv.config();
 
 const http = require('http');
 const hostname = '0.0.0.0';
-const port = process.env.PORT || 3000;
+const port = 8080;
 const server = http.createServer((req, res) => {
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/plain');
@@ -37,19 +37,29 @@ client.on("ready", () => {
   console.log(`Logged in as ${client.user.tag}!`);
 });
 
-// listen for messages
-client.on("messageCreate", async (message) => {
-  console.log(message);
-
-  // if message contains is /create, reply with button for testing "push my btns"
-  if (message.content === "/create") {
-    message.reply({
-      content: "Push my btns",
-      components: [btn]
+// slash command for handling /create
+// ideally opens a modal with buttons to choose from
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === "create") { 
+    await interaction.reply({
+      content: 'Creating menu...',
+      // ephemeral: true // only visible to user who clicked
     });
-  }
 
+    // create a button here etc
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('createMenu')
+          .setLabel('Create Menu')
+          .setStyle(ButtonStyle.Primary),
+      );
+    await interaction.followUp({ content: 'Click the button to create a menu:', components: [row] });
+  }
 });
+
 
 // listen for button interactions
 client.on("interactionCreate", async (interaction) => {
