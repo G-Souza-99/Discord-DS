@@ -1,77 +1,101 @@
-const http = require("http");
-const { verifyKey } = require("discord-interactions");
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Events } from 'discord.js';
 
-const port = Number(process.env.PORT) || 8080;
-const PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || "";
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-console.log("Booting…");
-console.log("Public key present:", PUBLIC_KEY ? `yes (len=${PUBLIC_KEY.length})` : "NO");
+client.once(Events.ClientReady, (c) => {
+  console.log(`🤖 Logged in as ${c.user.tag}`);
+});
 
-const server = http.createServer(async (req, res) => {
-  if (req.method !== "POST") {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    return res.end("OK\n");
-  }
+function isValidUrl(str) {
   try {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const rawBody = Buffer.concat(chunks);
-
-    const sig = req.headers["x-signature-ed25519"];
-    const ts  = req.headers["x-signature-timestamp"];
-
-    if (!sig || !ts || !PUBLIC_KEY) {
-      console.error("Missing header or public key", { hasSig: !!sig, hasTs: !!ts, hasKey: !!PUBLIC_KEY });
-      res.writeHead(401); return res.end("bad signature");
-    }
-
-    const valid = verifyKey(rawBody, sig, ts, PUBLIC_KEY);
-    if (!valid) {
-      console.error("Signature verification FAILED");
-      res.writeHead(401); return res.end("bad signature");
-    }
-
-    const body = JSON.parse(rawBody.toString("utf8"));
-    console.log("Got interaction type:", body.type, "name:", body.data?.name, "custom_id:", body.data?.custom_id);
-
-    // PING -> PONG
-    if (body.type === 1) {
-      console.log("Replying PONG");
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ type: 1 }));
-    }
-
-    // /create
-    if (body.type === 2 && body.data?.name === "create") {
-      const resp = {
-        type: 4,
-        data: {
-          content: "Test menu:",
-          components: [{
-            type: 1,
-            components: [{ type: 2, style: 1, label: "Click me", custom_id: "testButton" }]
-          }]
-        }
-      };
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify(resp));
-    }
-
-    // button click
-    if (body.type === 3 && body.data?.custom_id === "testButton") {
-      const update = { type: 7, data: { content: "Clicked ✅", components: [] } };
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify(update));
-    }
-
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({}));
-  } catch (e) {
-    console.error("Handler error:", e);
-    res.writeHead(500); res.end("server error");
+    const u = new URL(str);
+    return ['http:', 'https:'].includes(u.protocol);
+  } catch {
+    return false;
   }
+}
+
+// All command handling logic
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  // ----- /help -----
+  if (interaction.commandName === 'help') {
+    const which = interaction.options.getString('command');
+
+    if (which === 'copy1t1') {
+      await interaction.reply({
+        ephemeral: true,
+        content:
+`**/copy1t1** — Start copy 1-to-1 workflow for a page (optional translate)
+
+**Usage**
+\`/copy1t1 link:<url> [translate:true|false] [languagefrom:<code>] [languageto:<code>]\`
+
+**Parameters**
+• **link** (required): Full http(s) URL to process  
+• **translate** (optional): Default false. If true, include **languagefrom** and **languageto**  
+• **languagefrom** (optional): ISO code, e.g. \`nl\`, \`en\`, \`de\`  
+• **languageto** (optional): ISO code, e.g. \`en\`, \`nl\`, \`fr\`
+
+**Examples**
+• \`/copy1t1 link:https://example.com/product\`
+• \`/copy1t1 link:https://example.com/product translate:true languagefrom:nl languageto:en\`
+`
+      });
+      return;
+    }
+
+    // Generic help
+    await interaction.reply({
+      ephemeral: true,
+      content:
+`**Funnel Helper Bot — Commands**
+
+• **/copy1t1** — Start copy 1-to-1 workflow  
+  → Use \`/help command:copy1t1\` for full usage and examples`
+    });
+    return;
+  }
+
+  // ----- /copy1t1 -----
+  if (interaction.commandName !== 'copy1t1') return;
+
+  const link = interaction.options.getString('link', true);
+  const translate = interaction.options.getBoolean('translate') ?? false;
+  const languageFrom = interaction.options.getString('languagefrom') || null;
+  const languageTo = interaction.options.getString('languageto') || null;
+
+  if (!isValidUrl(link)) {
+    await interaction.reply({ content: '❌ Please provide a valid http(s) URL.', ephemeral: true });
+    return;
+  }
+
+  // Basic guardrails if translate is true
+  if (translate && (!languageFrom || !languageTo)) {
+    await interaction.reply({
+      content: '❌ Translate is on — include both `languagefrom` and `languageto` (e.g. `nl` → `en`).',
+      ephemeral: true
+    });
+    return;
+  }
+
+  // For now: just acknowledge. (Hook to n8n/make later.)
+  await interaction.reply({
+    content:
+      `✅ Received:\n• Link: ${link}\n• Translate: ${translate ? 'yes' : 'no'}` +
+      (translate ? `\n• From: ${languageFrom}\n• To: ${languageTo}` : ''),
+    ephemeral: true
+  });
+
+  // TODO: trigger your n8n/make webhook here later.
+  // Example:
+  // await fetch(process.env.N8N_WEBHOOK_URL, {
+  //   method: 'POST',
+  //   headers: { 'Content-Type': 'application/json' },
+  //   body: JSON.stringify({ link, translate, languageFrom, languageTo, user: interaction.user.id })
+  // });
 });
 
-server.listen(port, "0.0.0.0", () => {
-  console.log(`Listening on :${port}`);
-});
+client.login(process.env.DISCORD_TOKEN);
